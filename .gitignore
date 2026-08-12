@@ -1,0 +1,11 @@
+.env
+.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+chroma_db/
+chroma_db_v2/
+chat_sessions.json
+memories.json
+settings.json
