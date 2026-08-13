@@ -77,7 +77,7 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 0.1
     stream: Optional[bool] = True
     web_search: Optional[bool] = True
-    speed_mode: Optional[str] = None  # 'fast' -> groq, 'slow' -> google
+    speed_mode: Optional[str] = None  # 'fast' -> groq, 'slow' -> google, 'pro' -> mistral
     require_approval: Optional[bool] = False
 
 
@@ -155,6 +155,9 @@ async def chat(request: ChatRequest):
     elif request.speed_mode == "slow":
         provider_override = "google"
         logger.info("Speed mode: SLOW (Google Gemini)")
+    elif request.speed_mode == "pro":
+        provider_override = "mistral"
+        logger.info("Speed mode: PRO (Mistral)")
 
     if request.stream:
         # Return SSE stream
@@ -456,6 +459,7 @@ async def delete_memory_endpoint(memory_id: str):
 class AppSettings(BaseModel):
     llm_provider: str
     gemini_model: str
+    mistral_model: str
     answering_method: str
     system_prompt: str
     github_token: str = ""
@@ -471,6 +475,7 @@ async def get_app_settings():
     return {
         "llm_provider": settings.llm_provider,
         "gemini_model": settings.gemini_model,
+        "mistral_model": settings.mistral_model,
         "answering_method": settings.answering_method,
         "system_prompt": settings.system_prompt,
         "github_token": settings.github_token,
@@ -489,6 +494,7 @@ async def update_app_settings(new_settings: AppSettings):
         
         current_dict["llm_provider"] = new_settings.llm_provider
         current_dict["gemini_model"] = new_settings.gemini_model
+        current_dict["mistral_model"] = new_settings.mistral_model
         current_dict["answering_method"] = new_settings.answering_method
         current_dict["system_prompt"] = new_settings.system_prompt
         current_dict["github_token"] = new_settings.github_token
@@ -501,6 +507,7 @@ async def update_app_settings(new_settings: AppSettings):
         
         settings.llm_provider = new_settings.llm_provider
         settings.gemini_model = new_settings.gemini_model
+        settings.mistral_model = new_settings.mistral_model
         settings.answering_method = new_settings.answering_method
         settings.system_prompt = new_settings.system_prompt
         settings.github_token = new_settings.github_token
@@ -511,6 +518,7 @@ async def update_app_settings(new_settings: AppSettings):
         
         os.environ["LLM_PROVIDER"] = new_settings.llm_provider
         os.environ["GEMINI_MODEL"] = new_settings.gemini_model
+        os.environ["MISTRAL_MODEL"] = new_settings.mistral_model
         os.environ["ANSWERING_METHOD"] = new_settings.answering_method
         os.environ["SYSTEM_PROMPT"] = new_settings.system_prompt
         os.environ["GITHUB_TOKEN"] = new_settings.github_token

@@ -134,6 +134,7 @@ def web_scraper_tool(url: str) -> str:
 
     Use this tool when:
     - The user provides a specific URL and asks you to read, summarize, or analyze it.
+    - The user wants "internet data to fetch and give the summarized output".
     - The user asks to 'extract links', 'scrape a page', 'get data from a website',
       or 'find all links on' a webpage.
     - You need to retrieve detailed content from a specific page that web_search

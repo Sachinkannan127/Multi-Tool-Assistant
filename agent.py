@@ -29,6 +29,8 @@ from tools.pdf_tool import create_pdf_tool, get_pdf_metadata
 from tools.memory import save_memory_tool, list_memories_tool, delete_memory_tool
 from tools.scraper import web_scraper_tool
 from tools.code_generator import code_generator_tool
+from tools.youtube_tool import youtube_tool
+from tools.instagram_tool import instagram_tool
 from tools.github_tool import github_tool
 from tools.slack_tool import slack_tool
 import memory_store
@@ -46,17 +48,22 @@ SYSTEM_PROMPT = """You are a powerful Multi-Tool AI Assistant. You help users by
 - Ensure your thought tags are closed before executing tools or returning the final answer.
 
 You have access to the following tools:
-1. **web_search** - Search the internet for real-time information, news, weather, current events, and up-to-date facts.
+1. **web_search_tool** - Search the internet for real-time information, news, weather, current events, and up-to-date facts.
 2. **calculator_tool** - Perform mathematical calculations, unit conversions, and financial calculations.
 3. **pdf_qa_tool** - Answer questions about uploaded PDF documents using retrieved context.
-4. **web_scraper_tool** - Fetch and extract full text content and all hyperlinks from a specific URL provided by the user.
+4. **web_scraper_tool** - Fetch and extract full text content and all hyperlinks from a specific URL provided by the user (general internet data fetching).
 5. **code_generator_tool** - Generate clean, production-ready code in ANY programming language from a natural-language description.
+6. **youtube_tool** - Extract transcripts from YouTube videos to summarize or analyze them.
+7. **instagram_tool** - Extract data from Instagram posts or profiles to summarize them.
 
 ## Decision Framework:
-- If the user asks about **current events, news, weather, prices, or real-time data** → use `web_search`
+- If the user asks a **general question** or asks to **search/fetch data from the internet, YouTube, or Instagram** without providing a specific URL → use `web_search_tool` to find relevant links or information first.
+- If the user asks about **current events, news, weather, prices, or real-time data** → use `web_search_tool`
 - If the user asks for **math calculations, conversions, or financial computations** → use `calculator_tool`
 - If the user asks about an **uploaded PDF or document content** → use `pdf_qa_tool`
 - If the user provides a **specific URL** and asks to read, summarize, scrape, extract data, or list links from it → use `web_scraper_tool`
+- If the user provides a **YouTube URL** and asks to summarize or fetch data → use `youtube_tool`
+- If the user provides an **Instagram URL** and asks to summarize or fetch data → use `instagram_tool`
 - If the user asks to **write, create, generate, build, or implement code** in any language → use `code_generator_tool` with input format "Language: description"
 - If the user asks about **GitHub repositories, issues, or code** → use `github_tool`
 - If the user asks to **send a message on Slack** → use `slack_tool`
@@ -80,9 +87,13 @@ You have access to the following tools:
 - When generating code, present it in a clean code block with the language specified
 - Be conversational and helpful
 - Use markdown formatting for readability
+- **CRITICAL:** Always include a short "Sources:" section at the very end of your response, listing the direct URLs of any tools you used.
+- **CRITICAL:** To prevent API errors, you MUST only use ONE tool call at a time. If you need to search for multiple things (e.g. two cities), combine them into a single search query instead of calling the tool twice.
+- **CRITICAL:** When invoking a tool, you MUST provide the exact tool name (e.g., 'web_search_tool', 'calculator_tool'). NEVER leave the tool name empty or invent a new tool name.
 - If a tool fails, explain the issue and suggest alternatives
 
 ## Important:
+- **ANTI-HALLUCINATION PROTOCOL:** When summarizing or extracting data from tools (web search, YouTube, Instagram, web scraper, PDF), you MUST ONLY use the exact facts, content, and quotes provided by the tool output. DO NOT invent, hallucinate, or assume any information that is not explicitly present in the tool results. If the tool does not provide the information, state clearly that you do not have it.
 - For multi-step problems, break them down and use multiple tools as needed
 - Always verify calculations when precision matters
 - Provide context for your answers, not just raw data
@@ -137,6 +148,16 @@ def get_llm(temperature: float = 0.1, provider: Optional[str] = None):
             temperature=temperature,
             streaming=True,
             max_output_tokens=8192,
+        )
+    elif active == "mistral":
+        model_name = os.getenv("MISTRAL_MODEL", settings.mistral_model)
+        from langchain_mistralai import ChatMistralAI
+        return ChatMistralAI(
+            model=model_name,
+            mistral_api_key=settings.mistral_api_key,
+            temperature=temperature,
+            max_tokens=4096,
+            max_retries=0,
         )
     else:
         os.environ["GROQ_API_KEY"] = settings.groq_api_key
@@ -238,6 +259,8 @@ def get_tools(enable_search: bool = True):
         delete_memory_tool,
         web_scraper_tool,
         code_generator_tool,
+        youtube_tool,
+        instagram_tool,
     ]
     
     if settings.github_token:
@@ -352,12 +375,12 @@ async def _determine_chat_route(message: str, has_pdf: bool) -> str:
     if has_pdf and any(k in query for k in pdf_indicators):
         return "pdf_faq"
 
-    # ── 3. Web search (tool calling) ─────────────────────────────────
+    # ── 3. Web search & Scrapers (tool calling) ─────────────────────────────────
     search_indicators = [
         "search", "google", "news", "weather", "today", "current", "latest",
         "stock", "price of", "live", "real-time", "right now", "this week",
         "map", "location", "temperature in", "weather in", "score",
-        "who won", "what happened", "trending",
+        "who won", "what happened", "trending", "youtube", "instagram", "summarize website"
     ]
     if any(k in query for k in search_indicators):
         return "tool_calling"
@@ -425,6 +448,9 @@ async def run_agent_stream(
     Args:
         provider: Optional override — 'groq' (fast mode) or 'google' (slow/capable mode).
     """
+    if "pro" in message.lower().split():
+        provider = "mistral"
+
     method = settings.answering_method.lower()
     
     if method == "pdf_faq":
@@ -493,6 +519,8 @@ async def _run_tool_calling_stream(
             "calculator_tool":  {"emoji": "🧮", "label": "Calculating..."},
             "pdf_qa_tool":      {"emoji": "📄", "label": "Reading PDF..."},
             "web_scraper_tool": {"emoji": "🕷️", "label": "Scraping webpage..."},
+            "youtube_tool":     {"emoji": "📺", "label": "Extracting YouTube..."},
+            "instagram_tool":   {"emoji": "📸", "label": "Scraping Instagram..."},
         }
 
         # Sub-task to run the agent in the same context context
@@ -556,31 +584,8 @@ async def _run_tool_calling_stream(
         await task
 
     except Exception as e:
-        is_rate_limit = _is_rate_limit_error(e)
         active_provider = provider or settings.llm_provider
-        if active_provider != "google" and settings.is_google_configured:
-            if is_rate_limit:
-                logger.warning(f"Groq rate limit hit — automatically falling back to Gemini. Error: {e}")
-            else:
-                logger.warning(f"Groq stream error — falling back to Gemini. Error: {e}")
-            
-            yield _sse_event({
-                "type": "fallback",
-                "from": "groq",
-                "to": "gemini",
-                "reason": "rate_limit" if is_rate_limit else "error",
-            })
-            try:
-                async for event in _run_tool_calling_stream(
-                    message, chat_history, temperature, enable_search, provider="google", require_approval=require_approval
-                ):
-                    yield event
-                return
-            except Exception as e2:
-                logger.error(f"Gemini fallback also failed: {e2}")
-                yield _sse_event({"type": "error", "error": f"Both Groq and Gemini failed. Last error: {e2}"})
-                return
-        logger.error(f"Agent stream error (no fallback available): {e}")
+        logger.error(f"Agent stream error with provider {active_provider}: {e}")
         yield _sse_event({
             "type": "error",
             "error": str(e),
@@ -765,6 +770,9 @@ async def run_agent_sync(
     Run the agent synchronously and return the full result.
     Routes to different answering methods based on configuration.
     """
+    if "pro" in message.lower().split():
+        provider = "mistral"
+
     method = settings.answering_method.lower()
     
     if method == "pdf_faq":
@@ -828,16 +836,6 @@ async def _run_tool_calling_sync(
 
     except Exception as e:
         logger.error(f"Agent error: {e}")
-        if settings.llm_provider == "groq":
-            logger.info("Groq query failed in sync. Redirecting query to Google Gemini.")
-            settings.llm_provider = "google"
-            try:
-                res = await _run_tool_calling_sync(message, chat_history, temperature, enable_search)
-                settings.llm_provider = "groq"
-                return res
-            except Exception as e2:
-                settings.llm_provider = "groq"
-                logger.error(f"Fallback to Google Gemini failed: {e2}")
         return {
             "response": f"I encountered an error: {str(e)}",
             "tools_used": [],

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
     eleven_api_key: str = os.getenv("ELEVEN_API_KEY", "")
     fish_api_key: str = os.getenv("FISH_API_KEY", "")
+    mistral_api_key: str = os.getenv("MISTRAL_API_KEY", "")
 
     # Integrations / Connectors
     github_token: str = os.getenv("GITHUB_TOKEN", "")
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     llm_provider: str = os.getenv("LLM_PROVIDER", "groq")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    mistral_model: str = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
     system_prompt: str = os.getenv("SYSTEM_PROMPT", "")
 
     # Embedding model
@@ -63,15 +65,23 @@ class Settings(BaseSettings):
         return bool(self.tavily_api_key and "placeholder" not in self.tavily_api_key.lower())
 
     @property
+    def is_mistral_configured(self) -> bool:
+        return bool(self.mistral_api_key and "placeholder" not in self.mistral_api_key.lower())
+
+    @property
     def is_llm_configured(self) -> bool:
         if self.llm_provider in ["google", "gemini"]:
             return self.is_google_configured
+        if self.llm_provider == "mistral":
+            return self.is_mistral_configured
         return self.is_groq_configured
 
     @property
     def is_demo_mode(self) -> bool:
         if self.llm_provider in ["google", "gemini"]:
             return not (self.is_google_configured and self.is_tavily_configured)
+        if self.llm_provider == "mistral":
+            return not (self.is_mistral_configured and self.is_tavily_configured)
         return not (self.is_groq_configured and self.is_google_configured and self.is_tavily_configured)
 
     class Config:

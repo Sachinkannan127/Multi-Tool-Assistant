@@ -45,13 +45,9 @@ def web_search_tool(query: str) -> str:
         query_lower = query.lower()
         if "weather" in query_lower:
             return (
-                "Summary: Current weather conditions in main cities:\n\n"
-                "[1] Weather in New York: 72°F (22°C), Sunny, Wind 8mph, Humidity 45%\n"
-                "Source: https://weather.mock/new-york\n"
-                "[2] Weather in London: 61°F (16°C), Overcast/Showers, Wind 12mph, Humidity 78%\n"
-                "Source: https://weather.mock/london\n"
-                "[3] Weather in Tokyo: 78°F (26°C), Clear, Wind 4mph, Humidity 52%\n"
-                "Source: https://weather.mock/tokyo\n"
+                f"Summary: Simulated current weather conditions for '{query}':\n\n"
+                f"[1] Weather for {query}: 82°F (28°C), Partly Cloudy, Wind 5mph, Humidity 65%\n"
+                f"Source: https://weather.mock/search?q={query.replace(' ', '+')}\n"
             )
         elif "news" in query_lower or "headlines" in query_lower or "current events" in query_lower:
             return (
