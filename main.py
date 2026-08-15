@@ -769,13 +769,25 @@ async def route_test(request: RouteTestRequest):
 
     # ── Semantic fallback (rare — tiny fast model) ──────────────────
     try:
-        fast_llm = ChatGroq(
-            model="llama-3.1-8b-instant",
-            groq_api_key=settings.groq_api_key,
-            temperature=0.0,
-            max_tokens=60,
-            max_retries=0,
-        )
+        if settings.is_groq_configured:
+            from langchain_groq import ChatGroq
+            fast_llm = ChatGroq(
+                model="llama-3.1-8b-instant",
+                groq_api_key=settings.groq_api_key,
+                temperature=0.0,
+                max_tokens=60,
+                max_retries=0,
+            )
+        elif settings.is_google_configured:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            fast_llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash-lite",
+                google_api_key=settings.google_api_key,
+                temperature=0.0,
+                max_output_tokens=60,
+            )
+        else:
+            raise ValueError("No LLM provider configured for route testing.")
         sys_msg = (
             "Classify the user query into EXACTLY one of three routes:\n"
             "  'RAG'          — questions about an uploaded document or file\n"

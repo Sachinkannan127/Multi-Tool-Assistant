@@ -129,12 +129,27 @@ def get_llm(temperature: float = 0.1, provider: Optional[str] = None):
                   If None, falls back to settings.llm_provider.
     """
     active = provider or settings.llm_provider
+
+    # Fallback logic if the requested provider is not configured
+    if active == "groq" and not settings.is_groq_configured:
+        if settings.is_google_configured:
+            active = "google"
+        elif settings.is_mistral_configured:
+            active = "mistral"
+            
+    if active in ["google", "gemini"] and not settings.is_google_configured:
+        if settings.is_groq_configured:
+            active = "groq"
+        elif settings.is_mistral_configured:
+            active = "mistral"
+
     if active in ["google", "gemini"]:
         model_name = os.getenv("GEMINI_MODEL", settings.gemini_model)
         from langchain_google_genai import ChatGoogleGenerativeAI
+        key = settings.google_api_key if settings.google_api_key else "placeholder"
         return ChatGoogleGenerativeAI(
             model=model_name,
-            google_api_key=settings.google_api_key,
+            google_api_key=key,
             temperature=temperature,
             streaming=True,
             max_output_tokens=8192,
@@ -142,18 +157,20 @@ def get_llm(temperature: float = 0.1, provider: Optional[str] = None):
     elif active == "mistral":
         model_name = os.getenv("MISTRAL_MODEL", settings.mistral_model)
         from langchain_mistralai import ChatMistralAI
+        key = settings.mistral_api_key if settings.mistral_api_key else "placeholder"
         return ChatMistralAI(
             model=model_name,
-            mistral_api_key=settings.mistral_api_key,
+            mistral_api_key=key,
             temperature=temperature,
             max_tokens=4096,
             max_retries=0,
         )
     else:
-        os.environ["GROQ_API_KEY"] = settings.groq_api_key
+        key = settings.groq_api_key if settings.groq_api_key else "placeholder"
+        os.environ["GROQ_API_KEY"] = key
         return ChatGroq(
             model=settings.groq_model,
-            groq_api_key=settings.groq_api_key,
+            groq_api_key=key,
             temperature=temperature,
             streaming=True,
             max_tokens=4096,
