@@ -274,7 +274,18 @@ def create_agent_executor(temperature: float = 0.1, enable_search: bool = True, 
     sys_prompt = _get_system_prompt()
 
     from langgraph.prebuilt import create_react_agent
-    return create_react_agent(llm, tools, state_modifier=sys_prompt)
+    import inspect
+    sig = inspect.signature(create_react_agent)
+    kwargs = {}
+    if "prompt" in sig.parameters:
+        kwargs["prompt"] = sys_prompt
+    elif "state_modifier" in sig.parameters:
+        kwargs["state_modifier"] = sys_prompt
+    elif "messages_modifier" in sig.parameters:
+        kwargs["messages_modifier"] = sys_prompt
+    else:
+        kwargs["state_modifier"] = sys_prompt
+    return create_react_agent(llm, tools, **kwargs)
 
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
