@@ -584,10 +584,20 @@ async def _run_tool_calling_stream(
     except Exception as e:
         active_provider = provider or settings.llm_provider
         logger.error(f"Agent stream error with provider {active_provider}: {e}")
-        yield _sse_event({
-            "type": "error",
-            "error": str(e),
-        })
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            yield _sse_event({
+                "type": "fallback",
+                "from": active_provider,
+                "to": "google",
+            })
+            async for event in _run_tool_calling_stream(message, chat_history, temperature, enable_search, provider="google", require_approval=require_approval):
+                yield event
+        else:
+            yield _sse_event({
+                "type": "error",
+                "error": str(e),
+            })
 
 
 async def _run_pdf_faq_stream(
@@ -661,10 +671,21 @@ Document: {pdf_meta.get('filename', 'uploaded document')}
         
     except Exception as e:
         logger.error(f"PDF FAQ error: {e}", exc_info=True)
-        yield _sse_event({
-            "type": "error",
-            "error": str(e),
-        })
+        active_provider = provider or settings.llm_provider
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            yield _sse_event({
+                "type": "fallback",
+                "from": active_provider,
+                "to": "google",
+            })
+            async for event in _run_pdf_faq_stream(message, chat_history, temperature, provider="google"):
+                yield event
+        else:
+            yield _sse_event({
+                "type": "error",
+                "error": str(e),
+            })
 
 
 async def _run_direct_llm_stream(
@@ -722,10 +743,21 @@ mention that you could use tools for that, but provide your best answer based on
         
     except Exception as e:
         logger.error(f"Direct LLM error: {e}", exc_info=True)
-        yield _sse_event({
-            "type": "error",
-            "error": str(e),
-        })
+        active_provider = provider or settings.llm_provider
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            yield _sse_event({
+                "type": "fallback",
+                "from": active_provider,
+                "to": "google",
+            })
+            async for event in _run_direct_llm_stream(message, chat_history, temperature, provider="google"):
+                yield event
+        else:
+            yield _sse_event({
+                "type": "error",
+                "error": str(e),
+            })
 
 
 def _build_final_prompt(
@@ -851,6 +883,10 @@ async def _run_tool_calling_sync(
 
     except Exception as e:
         logger.error(f"Agent error: {e}")
+        active_provider = provider or settings.llm_provider
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            return await _run_tool_calling_sync(message, chat_history, temperature, enable_search, provider="google")
         return {
             "response": f"I encountered an error: {str(e)}",
             "tools_used": [],
@@ -906,6 +942,10 @@ Document: {pdf_meta.get('filename', 'uploaded document')}
         
     except Exception as e:
         logger.error(f"PDF FAQ error: {e}", exc_info=True)
+        active_provider = provider or settings.llm_provider
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            return await _run_pdf_faq_sync(message, chat_history, temperature, provider="google")
         return {
             "response": f"Error querying PDF: {str(e)}",
             "tools_used": [],
@@ -961,6 +1001,10 @@ mention that you could use tools for that, but provide your best answer based on
         
     except Exception as e:
         logger.error(f"Direct LLM error: {e}", exc_info=True)
+        active_provider = provider or settings.llm_provider
+        is_auth_error = "401" in str(e) or "api key" in str(e).lower() or "unauthorized" in str(e).lower()
+        if is_auth_error and active_provider != "google" and settings.is_google_configured:
+            return await _run_direct_llm_sync(message, chat_history, temperature, provider="google")
         return {
             "response": f"I encountered an error: {str(e)}",
             "tools_used": [],
