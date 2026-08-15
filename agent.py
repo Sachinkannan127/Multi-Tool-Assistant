@@ -33,21 +33,14 @@ from tools.youtube_tool import youtube_tool
 from tools.instagram_tool import instagram_tool
 from tools.github_tool import github_tool
 from tools.slack_tool import slack_tool
+from tools.wikipedia_tool import wikipedia_tool
 import memory_store
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a powerful Multi-Tool AI Assistant. You help users by intelligently selecting and using the right tools for their needs.
 
-## Thinking Protocol:
-- BEFORE responding or using tools, you MUST analyze the user query and output your reasoning process step-by-step inside `<thought>` and `</thought>` tags.
-- For example:
-  <thought>
-  The user wants to know the stock price of Apple. I should use web_search to find it.
-  </thought>
-- Ensure your thought tags are closed before executing tools or returning the final answer.
-
-You have access to the following tools:
+## Decision Framework:
 1. **web_search_tool** - Search the internet for real-time information, news, weather, current events, and up-to-date facts.
 2. **calculator_tool** - Perform mathematical calculations, unit conversions, and financial calculations.
 3. **pdf_qa_tool** - Answer questions about uploaded PDF documents using retrieved context.
@@ -55,6 +48,9 @@ You have access to the following tools:
 5. **code_generator_tool** - Generate clean, production-ready code in ANY programming language from a natural-language description.
 6. **youtube_tool** - Extract transcripts from YouTube videos to summarize or analyze them.
 7. **instagram_tool** - Extract data from Instagram posts or profiles to summarize them.
+8. **wikipedia_tool** - Search Wikipedia and retrieve article summaries or content.
+
+You have access to various tools for web search, scraping, code generation, YouTube, Instagram, Wikipedia, GitHub, etc. Use them appropriately based on the user's request.
 
 ## Decision Framework:
 - If the user asks a **general question** or asks to **search/fetch data from the internet, YouTube, or Instagram** without providing a specific URL → use `web_search_tool` to find relevant links or information first.
@@ -64,20 +60,18 @@ You have access to the following tools:
 - If the user provides a **specific URL** and asks to read, summarize, scrape, extract data, or list links from it → use `web_scraper_tool`
 - If the user provides a **YouTube URL** and asks to summarize or fetch data → use `youtube_tool`
 - If the user provides an **Instagram URL** and asks to summarize or fetch data → use `instagram_tool`
+- If the user asks for factual information, background on a topic, or explicitly mentions Wikipedia → use `wikipedia_tool`
 - If the user asks to **write, create, generate, build, or implement code** in any language → use `code_generator_tool` with input format "Language: description"
 - If the user asks about **GitHub repositories, issues, or code** → use `github_tool`
 - If the user asks to **send a message on Slack** → use `slack_tool`
 - If the question is **general knowledge** that you can answer from training data → answer directly
 
-## Code Generation Examples (always use code_generator_tool):
-- "Write a Python function to reverse a linked list" → code_generator_tool("Python: function to reverse a linked list")
-- "Create a TypeScript fetch wrapper" → code_generator_tool("TypeScript: fetch wrapper with retry logic")
-- "Give me a SQL query to find duplicates" → code_generator_tool("SQL: find duplicate rows in a table")
-- "Show me a Rust fibonacci" → code_generator_tool("Rust: fibonacci sequence function")
-
 ## Response Guidelines:
+- You must ALWAYS structure your response in this exact order:
+  1. **Summary**: Provide a brief, high-level summary of the answer first.
+  2. **Main Content**: Provide the detailed, comprehensive response using structured markdown headings (##, ###), bullet points, and bold text.
+  3. **Sources**: End your response with a "Sources:" section listing the direct URLs or references of any tools you used.
 - Provide rich, detailed, and enhanced answers that fully address the user's intent. 
-- ALWAYS use a highly structured, ChatGPT-like output format. Use markdown headings (##, ###), bullet points, and bold text to organize information clearly.
 - If the user asks to "differentiate", "compare", or "differences between", ALWAYS output the comparison in a Markdown Table format.
 - EXTREMELY IMPORTANT: Use emojis heavily in your output text format! Prefix every heading, sub-heading, and bullet point with a relevant emoji (e.g., 🌟, 📊, ✅, etc.) to make the text highly engaging and visually appealing.
 - When using web search, include source citations with URLs
@@ -87,13 +81,9 @@ You have access to the following tools:
 - When generating code, present it in a clean code block with the language specified
 - Be conversational and helpful
 - Use markdown formatting for readability
-- **CRITICAL:** Always include a short "Sources:" section at the very end of your response, listing the direct URLs of any tools you used.
-- **CRITICAL:** To prevent API errors, you MUST only use ONE tool call at a time. If you need to search for multiple things (e.g. two cities), combine them into a single search query instead of calling the tool twice.
-- **CRITICAL:** When invoking a tool, you MUST provide the exact tool name (e.g., 'web_search_tool', 'calculator_tool'). NEVER leave the tool name empty or invent a new tool name.
-- If a tool fails, explain the issue and suggest alternatives
 
 ## Important:
-- **ANTI-HALLUCINATION PROTOCOL:** When summarizing or extracting data from tools (web search, YouTube, Instagram, web scraper, PDF), you MUST ONLY use the exact facts, content, and quotes provided by the tool output. DO NOT invent, hallucinate, or assume any information that is not explicitly present in the tool results. If the tool does not provide the information, state clearly that you do not have it.
+- **SUMMARIZATION & ANTI-HALLUCINATION:** When summarizing or extracting data from tools (web search, YouTube, Instagram, web scraper, PDF), you MUST synthesize the information in your own words. DO NOT just copy and paste the exact text verbatim. However, you MUST ONLY use the facts provided by the tool output. DO NOT invent, hallucinate, or assume any information that is not explicitly present. If the tool does not provide the information, state clearly that you do not have it.
 - For multi-step problems, break them down and use multiple tools as needed
 - Always verify calculations when precision matters
 - Provide context for your answers, not just raw data
@@ -261,6 +251,7 @@ def get_tools(enable_search: bool = True):
         code_generator_tool,
         youtube_tool,
         instagram_tool,
+        wikipedia_tool,
     ]
     
     if settings.github_token:
@@ -271,44 +262,19 @@ def get_tools(enable_search: bool = True):
     if enable_search and settings.is_tavily_configured:
         tools.insert(0, web_search_tool)
         
-    return [wrap_tool_with_approval(t) for t in tools]
+    return tools
 
 
-# ─── Cached agent executor (built once, reused per provider) ─────────────────
-_executor_cache: dict[str, AgentExecutor] = {}
+# ─── Agent executor ────────────────────────────────────────────────────────────
 
-
-def create_agent_executor(temperature: float = 0.1, enable_search: bool = True, provider: Optional[str] = None) -> AgentExecutor:
-    """Return a cached AgentExecutor (or create one if not cached yet)."""
-    cache_key = f"{provider or settings.llm_provider}_{enable_search}_{temperature}"
-    if cache_key in _executor_cache:
-        return _executor_cache[cache_key]
-
+def create_agent_executor(temperature: float = 0.1, enable_search: bool = True, provider: Optional[str] = None):
+    """Return a new LangGraph AgentExecutor."""
     llm = get_llm(temperature=temperature, provider=provider)
     tools = get_tools(enable_search=enable_search)
-
     sys_prompt = _get_system_prompt()
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", sys_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
 
-    agent = create_tool_calling_agent(llm, tools, prompt)
-
-    executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=False,          # Reduce console noise
-        max_iterations=3,       # Was 8 — 3 is plenty for single-tool queries
-        max_execution_time=20,  # Was 120 — fail fast if tools hang
-        return_intermediate_steps=True,
-        handle_parsing_errors=True,
-    )
-
-    _executor_cache[cache_key] = executor
-    return executor
+    from langgraph.prebuilt import create_react_agent
+    return create_react_agent(llm, tools, state_modifier=sys_prompt)
 
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
@@ -380,7 +346,8 @@ async def _determine_chat_route(message: str, has_pdf: bool) -> str:
         "search", "google", "news", "weather", "today", "current", "latest",
         "stock", "price of", "live", "real-time", "right now", "this week",
         "map", "location", "temperature in", "weather in", "score",
-        "who won", "what happened", "trending", "youtube", "instagram", "summarize website"
+        "who won", "what happened", "trending", "youtube", "instagram", "summarize website",
+        "github", "slack", "wikipedia"
     ]
     if any(k in query for k in search_indicators):
         return "tool_calling"
@@ -498,36 +465,39 @@ async def _run_tool_calling_stream(
     require_approval_var.set(require_approval)
 
     try:
-        executor = create_agent_executor(temperature=temperature, enable_search=enable_search, provider=provider)
-
-        # Convert chat history to LangChain message format
-        lc_history = []
+        from langchain_core.messages import HumanMessage, AIMessage
+        messages = []
         for msg in chat_history:
             if msg.get("role") == "user":
-                lc_history.append(HumanMessage(content=msg["content"]))
+                messages.append(HumanMessage(content=msg["content"]))
             elif msg.get("role") == "assistant":
-                lc_history.append(AIMessage(content=msg["content"]))
+                messages.append(AIMessage(content=msg["content"]))
+
+        executor = create_agent_executor(temperature=temperature, enable_search=enable_search, provider=provider)
 
         # Add PDF context if available
         pdf_meta = get_pdf_metadata()
         if pdf_meta:
             message = f"[PDF '{pdf_meta.get('filename', 'document')} is available for reference]\n\n{message}"
+        
+        messages.append(HumanMessage(content=message))
 
         # Map tool names to user-friendly indicators
         tool_indicators = {
-            "web_search":       {"emoji": "🔍", "label": "Searching the web..."},
+            "web_search_tool":       {"emoji": "🔍", "label": "Searching the web..."},
             "calculator_tool":  {"emoji": "🧮", "label": "Calculating..."},
             "pdf_qa_tool":      {"emoji": "📄", "label": "Reading PDF..."},
             "web_scraper_tool": {"emoji": "🕷️", "label": "Scraping webpage..."},
             "youtube_tool":     {"emoji": "📺", "label": "Extracting YouTube..."},
             "instagram_tool":   {"emoji": "📸", "label": "Scraping Instagram..."},
+            "wikipedia_tool":   {"emoji": "🏛️", "label": "Searching Wikipedia..."},
         }
 
         # Sub-task to run the agent in the same context context
         async def run_agent_executor():
             try:
                 async for event in executor.astream_events(
-                    {"input": message, "chat_history": lc_history},
+                    {"messages": messages},
                     version="v2"
                 ):
                     kind = event.get("event")
@@ -635,6 +605,12 @@ async def _run_pdf_faq_stream(
         system_msg = f"""You are a helpful assistant answering questions about a document.
 Use the provided document excerpts to answer the user's question accurately.
 If you cannot find the answer in the document, say so explicitly.
+IMPORTANT: When summarizing or extracting data from the document, you MUST synthesize the information in your own words. DO NOT just copy and paste the exact text verbatim.
+
+You must ALWAYS structure your response in this exact order:
+1. **Summary**: Provide a brief, high-level summary of the answer first.
+2. **Main Content**: Provide the detailed, comprehensive response using structured markdown headings (##, ###), bullet points, and bold text.
+3. **Sources**: End your response with a "Sources:" section listing the direct URLs or references of any tools you used (or simply state 'No external sources used' if none).
 
 Document: {pdf_meta.get('filename', 'uploaded document')}
 """
@@ -683,7 +659,12 @@ async def _run_direct_llm_stream(
         messages = [
             SystemMessage(content="""You are a helpful multi-tool personal assistant.
 Provide clear, accurate, and helpful answers. Be conversational and friendly.
-ALWAYS use a highly structured, ChatGPT-like output format. Use markdown headings (##, ###), bullet points, and bold text to organize information clearly.
+
+You must ALWAYS structure your response in this exact order:
+1. **Summary**: Provide a brief, high-level summary of the answer first.
+2. **Main Content**: Provide the detailed, comprehensive response using structured markdown headings (##, ###), bullet points, and bold text.
+3. **Sources**: End your response with a "Sources:" section listing the direct URLs or references of any tools you used (or simply state 'No external sources used' if none).
+
 If the user asks to "differentiate", "compare", or asks for the "differences between" things, ALWAYS output the comparison in a Markdown Table format.
 EXTREMELY IMPORTANT: Use emojis heavily in your output text format! Prefix every heading, sub-heading, and bullet point with a relevant emoji (e.g., 🌟, 📊, ✅, etc.) to make the text highly engaging and visually appealing.
 If you need current information (weather, news, prices) or need to perform calculations, 
@@ -805,33 +786,39 @@ async def _run_tool_calling_sync(
         return _run_agent_sync_mock(message, chat_history)
 
     try:
-        executor = create_agent_executor(temperature=temperature, enable_search=enable_search, provider=provider)
-
-        lc_history = []
+        from langchain_core.messages import HumanMessage, AIMessage
+        messages = []
         for msg in chat_history:
             if msg.get("role") == "user":
-                lc_history.append(HumanMessage(content=msg["content"]))
+                messages.append(HumanMessage(content=msg["content"]))
             elif msg.get("role") == "assistant":
-                lc_history.append(AIMessage(content=msg["content"]))
+                messages.append(AIMessage(content=msg["content"]))
+
+        executor = create_agent_executor(temperature=temperature, enable_search=enable_search, provider=provider)
 
         pdf_meta = get_pdf_metadata()
         if pdf_meta:
             message = f"[PDF '{pdf_meta.get('filename', 'document')} is available for reference]\n\n{message}"
 
+        messages.append(HumanMessage(content=message))
+
         result = await executor.ainvoke(
-            {"input": message, "chat_history": lc_history},
+            {"messages": messages}
         )
 
-        # Extract tool usage info
+        # Extract output from the last message
+        output_msg = result["messages"][-1].content
+        
+        # Tools used can be parsed from the state, but simple for now
         tools_used = []
-        for action, observation in result.get("intermediate_steps", []):
-            tool_name = action.tool if hasattr(action, 'tool') else str(action)
-            tools_used.append(tool_name)
+        for m in result["messages"]:
+            if hasattr(m, 'name') and m.type == 'tool':
+                tools_used.append(m.name)
 
         return {
-            "response": result.get("output", ""),
+            "response": output_msg,
             "tools_used": tools_used,
-            "intermediate_steps": len(result.get("intermediate_steps", [])),
+            "intermediate_steps": len(tools_used),
         }
 
     except Exception as e:
@@ -865,6 +852,12 @@ async def _run_pdf_faq_sync(
         system_msg = f"""You are a helpful assistant answering questions about a document.
 Use the provided document excerpts to answer the user's question accurately.
 If you cannot find the answer in the document, say so explicitly.
+IMPORTANT: When summarizing or extracting data from the document, you MUST synthesize the information in your own words. DO NOT just copy and paste the exact text verbatim.
+
+You must ALWAYS structure your response in this exact order:
+1. **Summary**: Provide a brief, high-level summary of the answer first.
+2. **Main Content**: Provide the detailed, comprehensive response using structured markdown headings (##, ###), bullet points, and bold text.
+3. **Sources**: End your response with a "Sources:" section listing the direct URLs or references of any tools you used (or simply state 'No external sources used' if none).
 
 Document: {pdf_meta.get('filename', 'uploaded document')}
 """
@@ -909,6 +902,12 @@ async def _run_direct_llm_sync(
         messages = [
             SystemMessage(content="""You are a helpful multi-tool personal assistant.
 Provide clear, accurate, and helpful answers. Be conversational and friendly.
+
+You must ALWAYS structure your response in this exact order:
+1. **Summary**: Provide a brief, high-level summary of the answer first.
+2. **Main Content**: Provide the detailed, comprehensive response using structured markdown headings (##, ###), bullet points, and bold text.
+3. **Sources**: End your response with a "Sources:" section listing the direct URLs or references of any tools you used (or simply state 'No external sources used' if none).
+
 If you need current information (weather, news, prices) or need to perform calculations,
 mention that you could use tools for that, but provide your best answer based on your knowledge."""),
         ]
